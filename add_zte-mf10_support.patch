@@ -1,0 +1,383 @@
+From e923c7977ba93276c9e655dfc33bfc39d748a178 Mon Sep 17 00:00:00 2001
+From: Gilles Mazoyer <mazoyer.gilles@omega.ovh>
+Date: Mon, 14 Sep 2015 20:52:04 +0200
+Subject: [PATCH] Ajout du support du routeur ZTE-MF10
+
+---
+ target/linux/ramips/base-files/etc/diag.sh         |  3 +
+ .../etc/hotplug.d/firmware/10-rt2x00-eeprom        |  3 +-
+ .../linux/ramips/base-files/etc/uci-defaults/leds  |  3 +
+ .../ramips/base-files/etc/uci-defaults/network     |  3 +-
+ .../ramips/base-files/lib/preinit/06_set_iface_mac |  3 +-
+ .../lib/preinit/07_set_preinit_iface_ramips        | 34 +++++++++
+ .../lib/preinit/29_init_hotplug_failsafe_ramips    |  9 +++
+ target/linux/ramips/base-files/lib/ramips.sh       |  9 ++-
+ .../ramips/base-files/lib/upgrade/platform.sh      |  3 +-
+ .../linux/ramips/base-files/sbin/hotplug.failsafe  |  4 +
+ .../arch/mips/include/asm/mach-ralink/machine.h    |  1 +
+ .../ramips/files/arch/mips/ralink/rt305x/Kconfig   |  5 ++
+ .../ramips/files/arch/mips/ralink/rt305x/Makefile  |  5 +-
+ .../files/arch/mips/ralink/rt305x/mach-zte-mf10.c  | 86 ++++++++++++++++++++++
+ target/linux/ramips/image/Makefile                 |  6 ++
+ target/linux/ramips/rt305x/config-3.3              |  1 +
+ 16 files changed, 169 insertions(+), 9 deletions(-)
+ create mode 100644 target/linux/ramips/base-files/lib/preinit/07_set_preinit_iface_ramips
+ create mode 100644 target/linux/ramips/base-files/lib/preinit/29_init_hotplug_failsafe_ramips
+ create mode 100644 target/linux/ramips/base-files/sbin/hotplug.failsafe
+ create mode 100644 target/linux/ramips/files/arch/mips/ralink/rt305x/mach-zte-mf10.c
+
+diff --git a/target/linux/ramips/base-files/etc/diag.sh b/target/linux/ramips/base-files/etc/diag.sh
+index 395ed6f..8585606 100755
+--- a/target/linux/ramips/base-files/etc/diag.sh
++++ b/target/linux/ramips/base-files/etc/diag.sh
+@@ -125,6 +125,9 @@ get_status_led() {
+ 	xdxrn502j)
+ 		status_led="xdxrn502j:green:power"
+ 		;;
++	zte-mf10)
++		status_led="zte-mf10:amber:ppp"
++		;;
+ 	esac
+ }
+ 
+diff --git a/target/linux/ramips/base-files/etc/hotplug.d/firmware/10-rt2x00-eeprom b/target/linux/ramips/base-files/etc/hotplug.d/firmware/10-rt2x00-eeprom
+index bc4ea02..e7d824c 100644
+--- a/target/linux/ramips/base-files/etc/hotplug.d/firmware/10-rt2x00-eeprom
++++ b/target/linux/ramips/base-files/etc/hotplug.d/firmware/10-rt2x00-eeprom
+@@ -89,7 +89,8 @@ case "$FIRMWARE" in
+ 	wr512-3gn | \
+ 	wr6202 | \
+ 	ur-336un | \
+-	xdxrn502j)
++	xdxrn502j | \
++	zte-mf10)
+ 		rt2x00_eeprom_extract "factory" 0 512
+ 		;;
+ 
+diff --git a/target/linux/ramips/base-files/etc/uci-defaults/leds b/target/linux/ramips/base-files/etc/uci-defaults/leds
+index 8f2a92b..fb89c15 100755
+--- a/target/linux/ramips/base-files/etc/uci-defaults/leds
++++ b/target/linux/ramips/base-files/etc/uci-defaults/leds
+@@ -83,6 +83,9 @@ case $board in
+ 	wcr-150gn)
+ 		set_usb_led "wcr150gn:amber:user"
+ 		;;
++	zte-mf10)
++		set_wifi_led "rt2800soc-phy0::radio"
++		;;
+ esac
+ 
+ ucidef_commit_leds
+diff --git a/target/linux/ramips/base-files/etc/uci-defaults/network b/target/linux/ramips/base-files/etc/uci-defaults/network
+index cf9c0bb..70d7bbb 100755
+--- a/target/linux/ramips/base-files/etc/uci-defaults/network
++++ b/target/linux/ramips/base-files/etc/uci-defaults/network
+@@ -207,7 +207,8 @@ ramips_setup_macs()
+ 		wan_mac=$(/usr/sbin/maccalc add "$lan_mac" 3)
+ 		;;
+ 
+-	tew-692gr)
++	tew-692gr | \
++	zte-mf10)
+ 		lan_mac=$(ramips_get_mac_binary factory 40)
+ 		wan_mac=$(/usr/sbin/maccalc add "$lan_mac" 4)
+ 		;;
+diff --git a/target/linux/ramips/base-files/lib/preinit/06_set_iface_mac b/target/linux/ramips/base-files/lib/preinit/06_set_iface_mac
+index b959479..4bfa2ae 100644
+--- a/target/linux/ramips/base-files/lib/preinit/06_set_iface_mac
++++ b/target/linux/ramips/base-files/lib/preinit/06_set_iface_mac
+@@ -56,7 +56,8 @@ preinit_set_mac_address() {
+ 	w306r-v20 |\
+ 	w502u    |\
+ 	wr6202 |\
+-	xdxrn502j)
++	xdxrn502j |\
++	zte-mf10)
+ 		mac=$(ramips_get_mac_binary factory 40)
+ 		ifconfig eth0 hw ether $mac 2>/dev/null
+ 		;;
+diff --git a/target/linux/ramips/base-files/lib/preinit/07_set_preinit_iface_ramips b/target/linux/ramips/base-files/lib/preinit/07_set_preinit_iface_ramips
+new file mode 100644
+index 0000000..ab87421
+--- /dev/null
++++ b/target/linux/ramips/base-files/lib/preinit/07_set_preinit_iface_ramips
+@@ -0,0 +1,34 @@
++#!/bin/sh
++#
++# Copyright (C) 2013 OpenWrt.org
++#
++
++. /lib/ramips.sh
++
++ramips_set_preinit_iface() {
++	RT3X5X=`cat /proc/cpuinfo | egrep "(RT3.5|RT5350)"`
++	if [ -n "${RT3X5X}" ]; then
++		swconfig dev rt305x set reset 1
++	fi
++
++	if echo $RT3X5X | grep -q RT5350; then
++		# This is a dirty hack to get by while the switch
++		# problem is investigated. When VLAN is disabled, ICMP
++		# pings work as expected, but TCP connections time
++		# out, so telnetting in failsafe is impossible. The
++		# likely reason is TCP checksumming hardware getting
++		# disabled:
++		# https://www.mail-archive.com/openwrt-devel@lists.openwrt.org/msg19870.html
++		swconfig dev rt305x set enable_vlan 1
++		swconfig dev rt305x vlan 1 set ports "0 6"
++		swconfig dev rt305x port 6 set untag 0
++		swconfig dev rt305x set apply 1
++		vconfig add eth0 1
++		ifconfig eth0 up
++		ifname=eth0.1
++	else
++		ifname=eth0
++	fi
++}
++
++boot_hook_add preinit_main ramips_set_preinit_iface
+diff --git a/target/linux/ramips/base-files/lib/preinit/29_init_hotplug_failsafe_ramips b/target/linux/ramips/base-files/lib/preinit/29_init_hotplug_failsafe_ramips
+new file mode 100644
+index 0000000..be1d6be
+--- /dev/null
++++ b/target/linux/ramips/base-files/lib/preinit/29_init_hotplug_failsafe_ramips
+@@ -0,0 +1,9 @@
++#!/bin/sh
++
++init_hotplug_failsafe() {
++	trap "" INT
++	trap "" USR1
++	echo '/sbin/hotplug.failsafe' > /proc/sys/kernel/hotplug
++}
++
++boot_hook_add preinit_main init_hotplug_failsafe
+diff --git a/target/linux/ramips/base-files/lib/ramips.sh b/target/linux/ramips/base-files/lib/ramips.sh
+index 25a1205..0f65a74 100755
+--- a/target/linux/ramips/base-files/lib/ramips.sh
++++ b/target/linux/ramips/base-files/lib/ramips.sh
+@@ -101,9 +101,9 @@ ramips_board_name() {
+ 	*"DIR-645")
+ 		name="dir-645"
+ 		;;
+-        *"DAP-1350")
+-                name="dap-1350"
+-                ;;
++	*"DAP-1350")
++		name="dap-1350"
++		;;
+ 	*"ESR-9753")
+ 		name="esr-9753"
+ 		;;
+@@ -200,6 +200,9 @@ ramips_board_name() {
+ 	*"XDX RN502J")
+ 		name="xdxrn502j"
+ 		;;
++	*"ZTE MF10")
++		name="zte-mf10"
++		;;
+ 	*)
+ 		name="generic"
+ 		;;
+diff --git a/target/linux/ramips/base-files/lib/upgrade/platform.sh b/target/linux/ramips/base-files/lib/upgrade/platform.sh
+index 25dbe6e..b4f026d 100755
+--- a/target/linux/ramips/base-files/lib/upgrade/platform.sh
++++ b/target/linux/ramips/base-files/lib/upgrade/platform.sh
+@@ -54,7 +54,8 @@ platform_check_image() {
+ 	wli-tx4-ag300n | \
+ 	whr-g300n |\
+ 	ur-336un |\
+-	wr512-3gn)
++	wr512-3gn |\
++	zte-mf10)
+ 		[ "$magic" != "27051956" ] && {
+ 			echo "Invalid image type."
+ 			return 1
+diff --git a/target/linux/ramips/base-files/sbin/hotplug.failsafe b/target/linux/ramips/base-files/sbin/hotplug.failsafe
+new file mode 100644
+index 0000000..0544339
+--- /dev/null
++++ b/target/linux/ramips/base-files/sbin/hotplug.failsafe
+@@ -0,0 +1,4 @@
++#!/bin/sh
++case "$1" in
++	button) kill -USR1 1;;
++esac
+diff --git a/target/linux/ramips/files/arch/mips/include/asm/mach-ralink/machine.h b/target/linux/ramips/files/arch/mips/include/asm/mach-ralink/machine.h
+index 83d2e26..1162bad 100644
+--- a/target/linux/ramips/files/arch/mips/include/asm/mach-ralink/machine.h
++++ b/target/linux/ramips/files/arch/mips/include/asm/mach-ralink/machine.h
+@@ -34,6 +34,7 @@ enum ramips_mach_type {
+ 	RAMIPS_MACH_NW718,		/* Netcore NW718 */
+ 	RAMIPS_MACH_WL_330N,		/* Asus WL-330N */
+ 	RAMIPS_MACH_WL_330N3G,		/* Asus WL-330N3G */
++	RAMIPS_MACH_ZTE_MF10,		/* ZTE MF10 */
+ 
+ 	/* RT3052 based machines */
+ 	RAMIPS_MACH_ALL0239_3G,		/* ALL0239-3G */
+diff --git a/target/linux/ramips/files/arch/mips/ralink/rt305x/Kconfig b/target/linux/ramips/files/arch/mips/ralink/rt305x/Kconfig
+index 945639b..5165002 100644
+--- a/target/linux/ramips/files/arch/mips/ralink/rt305x/Kconfig
++++ b/target/linux/ramips/files/arch/mips/ralink/rt305x/Kconfig
+@@ -179,6 +179,11 @@ config RT305X_MACH_XDX_RN502J
+ 	select RALINK_DEV_GPIO_BUTTONS
+ 	select RALINK_DEV_GPIO_LEDS
+ 
++config RT305X_MACH_ZTE_MF10
++	bool "ZTE MF10 Router support"
++	select RALINK_DEV_GPIO_BUTTONS
++	select RALINK_DEV_GPIO_LEDS
++
+ endmenu
+ 
+ endif
+diff --git a/target/linux/ramips/files/arch/mips/ralink/rt305x/Makefile b/target/linux/ramips/files/arch/mips/ralink/rt305x/Makefile
+index c7c27cb..a16e1d0 100644
+--- a/target/linux/ramips/files/arch/mips/ralink/rt305x/Makefile
++++ b/target/linux/ramips/files/arch/mips/ralink/rt305x/Makefile
+@@ -21,7 +21,7 @@ obj-$(CONFIG_RT305X_MACH_DIR_300_REVB)	+= mach-dir-300-revb.o
+ obj-$(CONFIG_RT305X_MACH_DIR_615_H1)	+= mach-dir-615-h1.o
+ obj-$(CONFIG_RT305X_MACH_DAP_1350)	+= mach-dap-1350.o
+ obj-$(CONFIG_RT305X_MACH_ESR_9753)	+= mach-esr-9753.o
+-obj-$(CONFIG_RT305X_MACH_F5D8235_V2)    += mach-f5d8235-v2.o
++obj-$(CONFIG_RT305X_MACH_F5D8235_V2)	+= mach-f5d8235-v2.o
+ obj-$(CONFIG_RT305X_MACH_FONERA20N)	+= mach-fonera20n.o
+ obj-$(CONFIG_RT305X_MACH_FREESTATION5)  += mach-freestation5.o
+ obj-$(CONFIG_RT305X_MACH_HW550_3G)	+= mach-hw550-3g.o
+@@ -46,4 +46,5 @@ obj-$(CONFIG_RT305X_MACH_WL_330N3G)	+= mach-wl-330n3g.o
+ obj-$(CONFIG_RT305X_MACH_WL341V3)	+= mach-wl341v3.o
+ obj-$(CONFIG_RT305X_MACH_WL351)		+= mach-wl351.o
+ obj-$(CONFIG_RT305X_MACH_WR6202)	+= mach-wr6202.o
+-obj-$(CONFIG_RT305X_MACH_XDX_RN502J)    += mach-xdx-rn502j.o
++obj-$(CONFIG_RT305X_MACH_XDX_RN502J)	+= mach-xdx-rn502j.o
++obj-$(CONFIG_RT305X_MACH_ZTE_MF10)	+= mach-zte-mf10.o
+diff --git a/target/linux/ramips/files/arch/mips/ralink/rt305x/mach-zte-mf10.c b/target/linux/ramips/files/arch/mips/ralink/rt305x/mach-zte-mf10.c
+new file mode 100644
+index 0000000..ad4714c
+--- /dev/null
++++ b/target/linux/ramips/files/arch/mips/ralink/rt305x/mach-zte-mf10.c
+@@ -0,0 +1,86 @@
++/*
++ *  ZTE MF10 Router support
++ *
++ *  Copyright (C) 2015 Gilles Mazoyer <mazoyer.gilles@omega.ovh>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include <linux/init.h>
++#include <linux/platform_device.h>
++
++#include <asm/mach-ralink/machine.h>
++#include <asm/mach-ralink/dev-gpio-buttons.h>
++#include <asm/mach-ralink/dev-gpio-leds.h>
++#include <asm/mach-ralink/rt305x.h>
++#include <asm/mach-ralink/rt305x_regs.h>
++
++#include "devices.h"
++
++#define ZTE_MF10_GPIO_LED_WPS	17 /* active low */
++#define ZTE_MF10_GPIO_LED_PPP	19 /* active low */
++
++#define ZTE_MF10_GPIO_BUTTON_POWER	8 /* active high */
++#define ZTE_MF10_GPIO_BUTTON_WPS	0  /* active low */
++
++#define ZTE_MF10_KEYS_POLL_INTERVAL	20
++#define ZTE_MF10_KEYS_DEBOUNCE_INTERVAL (3 * ZTE_MF10_KEYS_POLL_INTERVAL)
++
++static struct gpio_led zte_mf10_leds_gpio[] __initdata = {
++	{
++		.name		= "zte-mf10:amber:ppp",
++		.gpio		= ZTE_MF10_GPIO_LED_PPP,
++		.active_low	= 1,
++	}, {
++		.name		= "zte-mf10:amber:wps",
++		.gpio		= ZTE_MF10_GPIO_LED_WPS,
++		.active_low	= 1,
++	}
++};
++
++static struct gpio_keys_button zte_mf10_gpio_buttons[] __initdata = {
++	{
++		.desc		= "power",
++		.type		= EV_KEY,
++		.code		= KEY_POWER,
++		.debounce_interval = ZTE_MF10_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= ZTE_MF10_GPIO_BUTTON_POWER,
++		.active_low	= 1,
++	}, {
++		.desc		= "wps",
++		.type		= EV_KEY,
++		.code		= KEY_WPS_BUTTON,
++		.debounce_interval = ZTE_MF10_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= ZTE_MF10_GPIO_BUTTON_WPS,
++		.active_low	= 1,
++	}
++};
++static void __init zte_mf10_init(void)
++{
++	/* Ugh, inverted logic...
++	 * This actually puts the pins into GPIO mode rather I2C, SPI, ... */
++	rt305x_gpio_init(RT305X_GPIO_MODE_UART0(RT305X_GPIO_MODE_GPIO) |
++			 RT305X_GPIO_MODE_I2C |
++			 RT305X_GPIO_MODE_SPI |
++			 RT305X_GPIO_MODE_JTAG);
++
++	rt305x_register_flash(0);
++
++	rt305x_esw_data.vlan_config = RT305X_ESW_VLAN_CONFIG_NONE;
++	rt305x_register_ethernet();
++
++	ramips_register_gpio_leds(-1, ARRAY_SIZE(zte_mf10_leds_gpio),
++				  zte_mf10_leds_gpio);
++	ramips_register_gpio_buttons(-1, ZTE_MF10_KEYS_POLL_INTERVAL,
++				     ARRAY_SIZE(zte_mf10_gpio_buttons),
++				     zte_mf10_gpio_buttons);
++
++	rt305x_register_wifi();
++	rt305x_register_wdt();
++	rt305x_register_usb();
++}
++
++MIPS_MACHINE(RAMIPS_MACH_ZTE_MF10, "ZTE_MF10", "ZTE MF10",
++	     zte_mf10_init);
+diff --git a/target/linux/ramips/image/Makefile b/target/linux/ramips/image/Makefile
+index 3c0024b..02ee2d4 100644
+--- a/target/linux/ramips/image/Makefile
++++ b/target/linux/ramips/image/Makefile
+@@ -593,6 +593,11 @@ define Image/Build/Profile/XDXRN502J
+ 	$(call Image/Build/Template/$(fs_squash)/$(1),GENERIC_4M,xdxrn502j,XDXRN502J,ttyS1,57600,phys)
+ endef
+ 
++define Image/Build/Profile/ZTE_MF10
++	$(call Image/Build/Template/$(fs_squash)/$(1),GENERIC_8M,zte-mf10,ZTE_MF10,ttyS1,115200,phys)
++endef
++
++
+ ifeq ($(CONFIG_RALINK_RT305X),y)
+ define Image/Build/Profile/Default
+ 	$(call Image/Build/Profile/3G6200N,$(1))
+@@ -631,6 +636,7 @@ define Image/Build/Profile/Default
+ 	$(call Image/Build/Profile/WR5123GN,$(1))
+ 	$(call Image/Build/Profile/WR6202,$(1))
+ 	$(call Image/Build/Profile/XDXRN502J,$(1))
++	$(call Image/Build/Profile/ZTE_MF10,$(1))
+ endef
+ endif
+ 
+diff --git a/target/linux/ramips/rt305x/config-3.3 b/target/linux/ramips/rt305x/config-3.3
+index 1e067fb..c647f38 100644
+--- a/target/linux/ramips/rt305x/config-3.3
++++ b/target/linux/ramips/rt305x/config-3.3
+@@ -123,6 +123,7 @@ CONFIG_RT305X_MACH_WL_330N3G=y
+ CONFIG_RT305X_MACH_WR512_3GN=y
+ CONFIG_RT305X_MACH_WR6202=y
+ CONFIG_RT305X_MACH_XDX_RN502J=y
++CONFIG_RT305X_MACH_ZTE_MF10=y
+ # CONFIG_SCSI_DMA is not set
+ CONFIG_SERIAL_8250_NR_UARTS=4
+ CONFIG_SERIAL_8250_RT288X=y
+-- 
+2.5.1
+
